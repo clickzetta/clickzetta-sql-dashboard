@@ -1,0 +1,190 @@
+import datetime
+import pandas as pd
+import numpy as np
+import streamlit as st
+from st_aggrid import AgGrid, ColumnsAutoSizeMode, GridUpdateMode, GridOptionsBuilder, ExcelExportMode
+import altair as alt
+from PIL import Image
+
+icon = None
+try:
+    icon = Image.open('icon.png')
+except:
+    pass
+
+st.set_page_config(
+    page_title="ClickZetta Lakehouse SQL Monitor",
+    page_icon=icon,
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items = {
+        'About': 'https://github.com/clickzetta/clickzetta-sql-dashboard'
+    }
+)
+
+st.title('ClickZetta Lakehouse SQL Dashboard')
+
+workspace = st.query_params.get('workspace', default='quickstart_ws')
+cz_conn = st.connection(workspace, 'sql', ttl=60)
+filter = 'true'
+filter_7days = 'true'
+
+with st.form('filter'):
+
+    col0, col1, col2, col3 = st.columns(4)
+
+    with col0:
+        st.code(f'Current Workspace: "{workspace}"\nChange workspace in URL, eg ?workspace=foo')
+
+    with col1:
+        d = st.date_input('Date', datetime.date.today())
+        date_start = d.strftime('%Y-%m-%d 00:00:00')
+        date_end = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d 00:00:00')
+        date_far = (d + datetime.timedelta(days=-7)).strftime('%Y-%m-%d 00:00:00')
+
+    with col2:
+        df_vclusters = cz_conn.query('show vclusters;')
+        vclusters = df_vclusters['name'].to_list()
+        vcluster_selected = st.multiselect('VCluster', vclusters)
+        if vcluster_selected:
+            tmp = ",".join([f'"{v}"' for v in vcluster_selected])
+            filter = f'{filter} and virtual_cluster in ({tmp})'
+
+    with col3:
+        df_users = cz_conn.query('show users')
+        users = df_users['name'].to_list()
+        user_selected = st.multiselect('User', users)
+        if user_selected:
+            tmp = ",".join([f'"{v}"' for v in user_selected])
+            filter = f'{filter} and job_creator in ({tmp})'
+
+    submitted = st.form_submit_button('Analyze')
+
+if submitted:
+    filter_7days = f"{filter} and start_time>='{date_far}'::timestamp and start_time<'{date_end}'::timestamp"
+    filter = f"{filter} and start_time>='{date_start}'::timestamp and start_time<'{date_end}'::timestamp"
+
+    st.header(f'24Hours Stats for [{date_start}, {date_end})')
+    sql=f'''
+with t as (
+select count(1) as total, sum(if(status='SUCCEED',1,0)) as succeed, sum(if(status='RUNNING',1,0)) as running, sum(if(status='FAILED',1,0)) as failed
+from information_schema.job_history
+where {filter} )
+select total, succeed, round(succeed/total*100,2) as succeed_rate, failed, round(failed/total*100,2) as failed_rate, running
+from t
+'''
+    # st.code(sql)
+    df_stats = cz_conn.query(sql)
+    # st.dataframe(df_stats, hide_index=True)
+    AgGrid(df_stats,
+           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+           excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+           enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+
+    sql=f'''
+select job_id,start_time,job_creator,job_text,cru,input_bytes,output_bytes
+from information_schema.job_history
+where status="RUNNING" and {filter};
+'''
+    df_running = cz_conn.query(sql)
+    if not df_running.empty:
+        st.subheader('Running SQLs')
+        # st.dataframe(df_running)
+        AgGrid(df_running,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+
+    st.subheader('Duration Distribution Chart')
+    sql = f'''
+WITH t1 AS (
+select cast(execution_time * 1000 as bigint) as duration
+from information_schema.job_history
+where status='SUCCEED' and {filter}
+), t2 AS (
+select if(duration<1,1,duration) as duration, NTILE(100) OVER (ORDER BY duration asc) AS percent
+from t1
+)
+SELECT
+percent,
+AVG(duration) as avg_duration,
+MAX(duration) AS max_duration
+FROM t2
+GROUP BY percent
+ORDER BY percent asc;
+'''
+    df_oneday = cz_conn.query(sql)
+    c = alt.layer(
+        alt.Chart(df_oneday).mark_line(point=True).encode(
+            x=alt.X('percent', title='percent(%)'),
+            y=alt.Y('max_duration', title='duration(ms)').scale(type='log'))
+    ).interactive()
+    st.altair_chart(c, use_container_width=True)
+
+    sql = f'''
+select job_id, start_time, job_creator, job_text, error_message
+from information_schema.job_history
+where status="FAILED" and {filter}
+'''
+    df_failed = cz_conn.query(sql)
+    if not df_failed.empty:
+        st.subheader(f'Failed SQLs ({len(df_failed)})')
+        # st.dataframe(df_failed, use_container_width=True)
+        AgGrid(df_failed,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+
+    sql = f'''
+select job_id, start_time, execution_time*1000 as duration, job_creator, job_text
+from information_schema.job_history
+where status="SUCCEED" and execution_time>5 and {filter}
+order by execution_time desc
+'''
+    df_slow = cz_conn.query(sql)
+    if not df_slow.empty:
+        st.subheader(f'Slow SQLs ({len(df_slow)})')
+        # st.dataframe(df_slow, use_container_width=True)
+        AgGrid(df_slow,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+
+    st.header(f'7 Days Stats for [{date_far}, {date_end})')
+    sql = f'''
+with t1 as (
+  select date_format(start_time,'yyyy-MM-dd E') as ds,
+    if(status='SUCCEED',1,0) as succeed,
+    if(status='FAILED',1,0) as failed,
+    execution_time*1000 as duration
+  from information_schema.job_history
+  where {filter_7days} ),
+  t2 as (
+    select ds,count(ds) as total,sum(succeed) as succeed,sum(failed) as failed,
+      avg(duration) as avg,
+      percentile(duration, 0.50) as p50,
+      percentile(duration, 0.75) as p75,
+      percentile(duration, 0.90) as p90,
+      percentile(duration, 0.95) as p95,
+      percentile(duration, 0.99) as p99,
+      max(duration) as max,
+    from t1
+    group by ds
+  )
+select ds,total,round(failed/total*100,2) as failed_rate,
+  avg::bigint as avg,
+  p50::bigint as p50,
+  p75::bigint as p75,
+  p90::bigint as p90,
+  p95::bigint as p95,
+  p99::bigint as p99,
+  max::bigint as max
+from t2
+order by ds desc
+'''
+    # st.code(sql)
+    df_7days = cz_conn.query(sql)
+    AgGrid(df_7days,
+           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+           excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+           enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)

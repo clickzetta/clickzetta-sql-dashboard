@@ -1,0 +1,5 @@
+streamlit
+altair
+streamlit-aggrid
+clickzetta-sqlalchemy
+pillow
