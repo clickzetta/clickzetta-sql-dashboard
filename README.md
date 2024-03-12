@@ -3,7 +3,7 @@
 # Getting Started
 
 ```
-# setup python env
+# setup python env, 3.9 tested
 pip install -r requirements.txt
 
 # a little bit hack here, will be removed soon
@@ -20,4 +20,4 @@ echo 'url = "clickzetta://USER:PASSWORD@INSTANCE.ap-beijing-tencentcloud.api.cli
 streamlit run main.py
 ```
 
-Open [http://localhost:8501](http://localhost:8501) in your browser.
+Open [http://localhost:8501?workspace=WORKSPACE](http://localhost:8501?workspace=WORKSPACE) in your browser.

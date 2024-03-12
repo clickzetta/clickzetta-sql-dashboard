@@ -34,7 +34,7 @@ with st.form('filter'):
     col0, col1, col2, col3 = st.columns(4)
 
     with col0:
-        st.code(f'Current Workspace: "{workspace}"\nChange workspace in URL, eg ?workspace=foo')
+        st.code(f'Current Workspace: "{workspace}"\nChange workspace in URL, eg. ?workspace=foo')
 
     with col1:
         d = st.date_input('Date', datetime.date.today())
@@ -64,7 +64,7 @@ if submitted:
     filter_7days = f"{filter} and start_time>='{date_far}'::timestamp and start_time<'{date_end}'::timestamp"
     filter = f"{filter} and start_time>='{date_start}'::timestamp and start_time<'{date_end}'::timestamp"
 
-    st.header(f'24Hours Stats for [{date_start}, {date_end})')
+    st.header(f'24 Hours Stats [{date_start}, {date_end})')
     sql=f'''
 with t as (
 select count(1) as total, sum(if(status='SUCCEED',1,0)) as succeed, sum(if(status='RUNNING',1,0)) as running, sum(if(status='FAILED',1,0)) as failed
@@ -150,7 +150,7 @@ order by execution_time desc
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
-    st.header(f'7 Days Stats for [{date_far}, {date_end})')
+    st.header(f'7 Days Stats [{date_far}, {date_end})')
     sql = f'''
 with t1 as (
   select date_format(start_time,'yyyy-MM-dd E') as ds,
@@ -171,7 +171,7 @@ with t1 as (
     from t1
     group by ds
   )
-select ds,total,round(failed/total*100,2) as failed_rate,
+select ds as date,total,round(failed/total*100,2) as failed_rate,
   avg::bigint as avg,
   p50::bigint as p50,
   p75::bigint as p75,
