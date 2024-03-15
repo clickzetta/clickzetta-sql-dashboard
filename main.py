@@ -67,10 +67,10 @@ if submitted:
     st.header(f'24 Hours Stats [{date_start}, {date_end})')
     sql=f'''
 with t as (
-select count(1) as total, sum(if(status='SUCCEED',1,0)) as succeed, sum(if(status='RUNNING',1,0)) as running, sum(if(status='FAILED',1,0)) as failed
+select count(1) as total, sum(if(status='SUCCEED',1,0)) as succeed, sum(if(status='RUNNING',1,0)) as running, sum(if(status='FAILED',1,0)) as failed, min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, round(succeed/total*100,2) as succeed_rate, failed, round(failed/total*100,2) as failed_rate, running
+select total, succeed, round(succeed/total*100,2) as succeed_rate, failed, round(failed/total*100,2) as failed_rate, running, first_sql, last_sql
 from t
 '''
     # st.code(sql)
@@ -121,8 +121,29 @@ ORDER BY percent asc;
     ).interactive()
     st.altair_chart(c, use_container_width=True)
 
+    st.subheader('QPS Distribution Chart')
     sql = f'''
-select job_id, start_time, job_creator, job_text, error_message
+WITH t1 as (select date_trunc('SECOND', start_time) as time_second
+from information_schema.job_history
+where {filter} ),
+t2 as ( select time_second, count(1) as qps from t1
+group by time_second ),
+t3 as ( select date_trunc('MINUTE', time_second) as time_minute, qps
+from t2 )
+select time_minute, max(qps) as max_qps
+from t3
+group by time_minute order by time_minute asc;
+'''
+    df_qps = cz_conn.query(sql)
+    c = alt.layer(
+        alt.Chart(df_qps).mark_bar(size=1).encode(
+            x=alt.X('time_minute', title='time(minute)'),
+            y=alt.Y('max_qps', title='qps(max)'))
+    ).interactive()
+    st.altair_chart(c, use_container_width=True)
+
+    sql = f'''
+select job_id, start_time, execution_time as duration, job_creator, job_text, error_message
 from information_schema.job_history
 where status="FAILED" and {filter}
 '''
