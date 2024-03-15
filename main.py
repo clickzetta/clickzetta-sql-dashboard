@@ -24,8 +24,17 @@ st.set_page_config(
 
 st.title('ClickZetta Lakehouse SQL Dashboard')
 
+TTL = 60
+
 workspace = st.query_params.get('workspace', default='quickstart_ws')
-cz_conn = st.connection(workspace, 'sql', ttl=60)
+try:
+    cz_conn = st.connection(workspace, 'sql', ttl=TTL)
+except:
+    st.error(f'failed to retrive connection {workspace}.')
+    st.info('make sure corresponding connection info is correctly configured in .streamlit/secrets.toml')
+    st.code('you can specify workspace in URL, eg. ?workspace=foo')
+    st.stop()
+
 filter = 'true'
 filter_7days = 'true'
 
@@ -51,7 +60,7 @@ with st.form('filter'):
             filter = f'{filter} and virtual_cluster in ({tmp})'
 
     with col3:
-        df_users = cz_conn.query('show users')
+        df_users = cz_conn.query('show users;')
         users = df_users['name'].to_list()
         user_selected = st.multiselect('User', users)
         if user_selected:
@@ -74,7 +83,7 @@ select total, succeed, round(succeed/total*100,2) as succeed_rate, failed, round
 from t
 '''
     # st.code(sql)
-    df_stats = cz_conn.query(sql)
+    df_stats = cz_conn.query(sql, ttl=TTL)
     # st.dataframe(df_stats, hide_index=True)
     AgGrid(df_stats,
            use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
@@ -86,7 +95,7 @@ select job_id,start_time,job_creator,job_text,cru,input_bytes,output_bytes
 from information_schema.job_history
 where status="RUNNING" and {filter};
 '''
-    df_running = cz_conn.query(sql)
+    df_running = cz_conn.query(sql, ttl=TTL)
     if not df_running.empty:
         st.subheader('Running SQLs')
         # st.dataframe(df_running)
@@ -113,7 +122,7 @@ FROM t2
 GROUP BY percent
 ORDER BY percent asc;
 '''
-    df_oneday = cz_conn.query(sql)
+    df_oneday = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
         alt.Chart(df_oneday).mark_line(point=True).encode(
             x=alt.X('percent', title='percent(%)'),
@@ -134,7 +143,7 @@ select time_minute, max(qps) as max_qps
 from t3
 group by time_minute order by time_minute asc;
 '''
-    df_qps = cz_conn.query(sql)
+    df_qps = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
         alt.Chart(df_qps).mark_bar(size=1).encode(
             x=alt.X('time_minute', title='time(minute)'),
@@ -147,7 +156,7 @@ select job_id, start_time, execution_time as duration, job_creator, job_text, er
 from information_schema.job_history
 where status="FAILED" and {filter}
 '''
-    df_failed = cz_conn.query(sql)
+    df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
         st.subheader(f'Failed SQLs ({len(df_failed)})')
         # st.dataframe(df_failed, use_container_width=True)
@@ -162,7 +171,7 @@ from information_schema.job_history
 where status="SUCCEED" and execution_time>5 and {filter}
 order by execution_time desc
 '''
-    df_slow = cz_conn.query(sql)
+    df_slow = cz_conn.query(sql, ttl=TTL)
     if not df_slow.empty:
         st.subheader(f'Slow SQLs ({len(df_slow)})')
         # st.dataframe(df_slow, use_container_width=True)
@@ -204,7 +213,7 @@ from t2
 order by ds desc
 '''
     # st.code(sql)
-    df_7days = cz_conn.query(sql)
+    df_7days = cz_conn.query(sql, ttl=TTL)
     AgGrid(df_7days,
            use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
            excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
