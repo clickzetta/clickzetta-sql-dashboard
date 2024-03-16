@@ -76,10 +76,18 @@ if submitted:
     st.header(f'24 Hours Stats [{date_start}, {date_end})')
     sql=f'''
 with t as (
-select count(1) as total, sum(if(status='SUCCEED',1,0)) as succeed, sum(if(status='RUNNING',1,0)) as running, sum(if(status='FAILED',1,0)) as failed, min(start_time) as first_sql, max(start_time) as last_sql
+select count(1) as total,
+  sum(if(status='SUCCEED',1,0)) as succeed,
+  sum(if(status='RUNNING',1,0)) as running,
+  sum(if(status='FAILED',1,0)) as failed,
+  sum(if(status='CANCELLED',1,0)) as cancelled,
+  min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, round(succeed/total*100,2) as succeed_rate, failed, round(failed/total*100,2) as failed_rate, running, first_sql, last_sql
+select total, succeed, round(100*succeed/total,2) as succeed_rate,
+  failed, round(100*failed/total,2) as failed_rate,
+  cancelled, round(100*cancelled/total,2) as cancelled_rate,
+  running, first_sql, last_sql
 from t
 '''
     # st.code(sql)
@@ -167,7 +175,7 @@ where (status="FAILED" or status="CANCELLED") and {filter} order by start_time d
 '''
     df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
-        st.subheader(f'Failed SQLs ({len(df_failed)})')
+        st.subheader(f'Failed or Cancelled SQLs ({len(df_failed)})')
         # st.dataframe(df_failed, use_container_width=True)
         AgGrid(df_failed,
                use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
@@ -195,11 +203,15 @@ with t1 as (
   select date_format(start_time,'yyyy-MM-dd E') as ds,
     if(status='SUCCEED',1,0) as succeed,
     if(status='FAILED',1,0) as failed,
+    if(status='CANCELLED',1,0) as cancelled,
     execution_time*1000 as duration
   from information_schema.job_history
   where {filter_7days} ),
   t2 as (
-    select ds,count(ds) as total,sum(succeed) as succeed,sum(failed) as failed,
+    select ds,count(ds) as total,
+      sum(succeed) as succeed,
+      sum(failed) as failed,
+      sum(cancelled) as cancelled,
       avg(duration) as avg,
       percentile(duration, 0.50) as p50,
       percentile(duration, 0.75) as p75,
@@ -210,7 +222,10 @@ with t1 as (
     from t1
     group by ds
   )
-select ds as date,total,round(failed/total*100,2) as failed_rate,
+select ds as date,total,
+  round(100*succeed/total,2) as succeed_rate,
+  round(100*failed/total,2) as failed_rate,
+  round(100*cancelled/total,2) as cancelled_rate,
   avg::bigint as avg,
   p50::bigint as p50,
   p75::bigint as p75,
