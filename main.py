@@ -131,6 +131,7 @@ ORDER BY percent asc;
     st.altair_chart(c, use_container_width=True)
 
     st.subheader('QPS Distribution Chart')
+    # QPS
     sql = f'''
 WITH t1 as (select date_trunc('SECOND', start_time) as time_second
 from information_schema.job_history
@@ -143,6 +144,14 @@ select time_minute, max(qps) as max_qps
 from t3
 group by time_minute order by time_minute asc;
 '''
+    # QPM
+#     sql = f'''
+# WITH t1 as (select date_trunc('MINUTE', start_time) as time_minute
+# from information_schema.job_history
+# where {filter} )
+# select time_minute, count(1) as qpm from t1
+# group by time_minute order by time_minute asc;
+# '''
     df_qps = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
         alt.Chart(df_qps).mark_bar(size=1).encode(
@@ -152,9 +161,9 @@ group by time_minute order by time_minute asc;
     st.altair_chart(c, use_container_width=True)
 
     sql = f'''
-select job_id, start_time, execution_time as duration, job_creator, job_text, error_message
+select job_id, start_time, execution_time*1000 as duration, status, job_creator, job_text, error_message
 from information_schema.job_history
-where status="FAILED" and {filter}
+where (status="FAILED" or status="CANCELLED") and {filter} order by start_time desc;
 '''
     df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
@@ -169,11 +178,11 @@ where status="FAILED" and {filter}
 select job_id, start_time, execution_time*1000 as duration, job_creator, job_text
 from information_schema.job_history
 where status="SUCCEED" and execution_time>5 and {filter}
-order by execution_time desc
+order by start_time desc
 '''
     df_slow = cz_conn.query(sql, ttl=TTL)
     if not df_slow.empty:
-        st.subheader(f'Slow SQLs ({len(df_slow)})')
+        st.subheader(f'Slow Succeed SQLs ({len(df_slow)})')
         # st.dataframe(df_slow, use_container_width=True)
         AgGrid(df_slow,
                use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
