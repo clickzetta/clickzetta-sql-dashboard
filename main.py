@@ -26,7 +26,10 @@ st.title('ClickZetta Lakehouse SQL Dashboard')
 
 TTL = 60
 
-workspace = st.query_params.get('workspace', default='quickstart_ws')
+workspace = st.text_input('workspace', st.query_params.get('workspace', None))
+if not workspace:
+    st.stop()
+
 try:
     cz_conn = st.connection(workspace, 'sql', ttl=TTL)
 except:
@@ -40,16 +43,12 @@ filter_7days = 'true'
 
 with st.form('filter'):
 
-    col0, col1, col2, col3 = st.columns(4)
-
-    with col0:
-        st.code(f'Current Workspace: "{workspace}"\nChange workspace in URL, eg. ?workspace=foo')
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         d = st.date_input('Date', datetime.date.today())
         date_start = d.strftime('%Y-%m-%d 00:00:00')
         date_end = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d 00:00:00')
-        date_far = (d + datetime.timedelta(days=-7)).strftime('%Y-%m-%d 00:00:00')
 
     with col2:
         df_vclusters = cz_conn.query('show vclusters;')
@@ -66,6 +65,12 @@ with st.form('filter'):
         if user_selected:
             tmp = ",".join([f'"{v}"' for v in user_selected])
             filter = f'{filter} and job_creator in ({tmp})'
+    with col4:
+        slow_threshold = st.number_input('slow query(ms)', value=10000)
+
+    with col5:
+        days_of_stat = st.number_input('days of stats', value=7)
+        date_far = (d + datetime.timedelta(days=-days_of_stat)).strftime('%Y-%m-%d 00:00:00')
 
     submitted = st.form_submit_button('Analyze')
 
@@ -84,9 +89,9 @@ select count(1) as total,
   min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, round(100*succeed/total,2) as succeed_rate,
-  failed, round(100*failed/total,2) as failed_rate,
-  cancelled, round(100*cancelled/total,2) as cancelled_rate,
+select total, succeed, round(100*succeed/total,3) as succeed_rate,
+  failed, ceil(100*failed/total,3) as failed_rate,
+  cancelled, ceil(100*cancelled/total,3) as cancelled_rate,
   running, first_sql, last_sql
 from t
 '''
@@ -169,35 +174,46 @@ group by time_minute order by time_minute asc;
     st.altair_chart(c, use_container_width=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, status, job_creator, job_text, error_message
+select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, job_text, error_message
 from information_schema.job_history
-where (status="FAILED" or status="CANCELLED") and {filter} order by start_time desc;
+where status="FAILED" and {filter} order by start_time desc;
 '''
     df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
-        st.subheader(f'Failed or Cancelled SQLs ({len(df_failed)})')
-        # st.dataframe(df_failed, use_container_width=True)
+        st.subheader(f'Failed SQLs ({len(df_failed)})')
         AgGrid(df_failed,
                use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, job_creator, job_text
+select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, job_text, error_message
 from information_schema.job_history
-where status="SUCCEED" and execution_time>5 and {filter}
+where status="CANCELLED" and {filter} order by start_time desc;
+'''
+    df_cancelled = cz_conn.query(sql, ttl=TTL)
+    if not df_cancelled.empty:
+        st.subheader(f'Cancelled SQLs ({len(df_cancelled)})')
+        AgGrid(df_cancelled,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
+               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+
+    sql = f'''
+select job_id, start_time, execution_time*1000 as duration, input_bytes, cache_hit, virtual_cluster, job_creator, job_text
+from information_schema.job_history
+where status="SUCCEED" and execution_time*1000>={slow_threshold} and {filter}
 order by start_time desc
 '''
     df_slow = cz_conn.query(sql, ttl=TTL)
     if not df_slow.empty:
         st.subheader(f'Slow Succeed SQLs ({len(df_slow)})')
-        # st.dataframe(df_slow, use_container_width=True)
         AgGrid(df_slow,
                use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
-    st.header(f'7 Days Stats [{date_far}, {date_end})')
+    st.header(f'{days_of_stat} Days Stats [{date_far}, {date_end})')
     sql = f'''
 with t1 as (
   select date_format(start_time,'yyyy-MM-dd E') as ds,
@@ -223,9 +239,9 @@ with t1 as (
     group by ds
   )
 select ds as date,total,
-  round(100*succeed/total,2) as succeed_rate,
-  round(100*failed/total,2) as failed_rate,
-  round(100*cancelled/total,2) as cancelled_rate,
+  round(100*succeed/total,3) as succeed_rate,
+  ceil(100*failed/total,3) as failed_rate,
+  ceil(100*cancelled/total,3) as cancelled_rate,
   avg::bigint as avg,
   p50::bigint as p50,
   p75::bigint as p75,
