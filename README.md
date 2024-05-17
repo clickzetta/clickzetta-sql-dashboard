@@ -13,11 +13,11 @@ pip install pyarrow==11.0.0
 # prepare clickzetta lakehouse connection
 mkdir .streamlit
 cd .streamlit
-echo '[connections.xsy_p05]' > secrets.toml
+echo '[connections.WORKSPACE]' >> secrets.toml
 echo 'url = "clickzetta://USER:PASSWORD@INSTANCE.ap-beijing-tencentcloud.api.clickzetta.com/WORKSPACE?virtualcluster=VCLUSTER"' >> secrets.toml
 
 # run the app
 streamlit run main.py
 ```
 
-Open [http://localhost:8501?workspace=WORKSPACE](http://localhost:8501?workspace=WORKSPACE) in your browser.
+Open [http://localhost:8501](http://localhost:8501) in your browser.
