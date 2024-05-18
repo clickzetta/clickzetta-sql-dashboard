@@ -151,11 +151,11 @@ from information_schema.job_history
 where {filter} ),
 t2 as ( select time_second, count(1) as qps from t1
 group by time_second ),
-t3 as ( select date_trunc('MINUTE', time_second) as time_minute, qps
+t3 as ( select to_timestamp(int(to_unix_timestamp(time_second) / 10) * 10) as time, qps
 from t2 )
-select time_minute, max(qps) as max_qps
+select time, max(qps) as max_qps
 from t3
-group by time_minute order by time_minute asc;
+group by time order by time asc;
 '''
     # QPM
 #     sql = f'''
@@ -168,7 +168,7 @@ group by time_minute order by time_minute asc;
     df_qps = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
         alt.Chart(df_qps).mark_bar(size=1).encode(
-            x=alt.X('time_minute', title='time(minute)'),
+            x=alt.X('time', title='time(minute)', axis=alt.Axis(format='%X')),
             y=alt.Y('max_qps', title='qps(max)'))
     ).interactive()
     st.altair_chart(c, use_container_width=True)
