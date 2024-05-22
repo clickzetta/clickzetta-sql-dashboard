@@ -86,12 +86,14 @@ select count(1) as total,
   sum(if(status='RUNNING',1,0)) as running,
   sum(if(status='FAILED',1,0)) as failed,
   sum(if(status='CANCELLED',1,0)) as cancelled,
+  sum(if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0)) as slow,
   min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, round(100*succeed/total,3) as succeed_rate,
-  failed, ceil(100*failed/total,3) as failed_rate,
-  cancelled, ceil(100*cancelled/total,3) as cancelled_rate,
+select total, succeed, round(100*succeed/total,3) as `succeed rate`,
+  failed, ceil(100*failed/total,3) as `failed rate`,
+  cancelled, ceil(100*cancelled/total,3) as `cancelled rate`,
+  slow, ceil(100*cancelled/total,3) as `slow rate`,
   running, first_sql, last_sql
 from t
 '''
@@ -220,6 +222,7 @@ with t1 as (
     if(status='SUCCEED',1,0) as succeed,
     if(status='FAILED',1,0) as failed,
     if(status='CANCELLED',1,0) as cancelled,
+    if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0) as slow,
     execution_time*1000 as duration
   from information_schema.job_history
   where {filter_7days} ),
@@ -228,6 +231,7 @@ with t1 as (
       sum(succeed) as succeed,
       sum(failed) as failed,
       sum(cancelled) as cancelled,
+      sum(slow) as slow,
       avg(duration) as avg,
       percentile(duration, 0.50) as p50,
       percentile(duration, 0.75) as p75,
@@ -239,9 +243,14 @@ with t1 as (
     group by ds
   )
 select ds as date,total,
-  round(100*succeed/total,3) as succeed_rate,
-  ceil(100*failed/total,3) as failed_rate,
-  ceil(100*cancelled/total,3) as cancelled_rate,
+  succeed,
+  round(100*succeed/total,3) as `succeed rate`,
+  failed,
+  ceil(100*failed/total,3) as `failed rate`,
+  cancelled,
+  ceil(100*cancelled/total,3) as `cancelled rate`,
+  slow,
+  ceil(100*slow/total,3) as `slow rate`,
   avg::bigint as avg,
   p50::bigint as p50,
   p75::bigint as p75,
