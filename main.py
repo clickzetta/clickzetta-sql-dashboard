@@ -101,12 +101,12 @@ from t
     df_stats = cz_conn.query(sql, ttl=TTL)
     # st.dataframe(df_stats, hide_index=True)
     AgGrid(df_stats,
-           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
            excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
            enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
     sql=f'''
-select job_id,start_time,job_creator,job_text,cru,input_bytes,output_bytes
+select job_id,start_time,job_creator,substring(md5(job_text),1,7) as job_md5,job_text,cru,input_bytes,output_bytes
 from information_schema.job_history
 where status="RUNNING" and {filter};
 '''
@@ -115,7 +115,7 @@ where status="RUNNING" and {filter};
         st.subheader('Running SQLs')
         # st.dataframe(df_running)
         AgGrid(df_running,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
@@ -176,7 +176,7 @@ group by time order by time asc;
     st.altair_chart(c, use_container_width=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, job_text, error_message
+select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,job_text,error_message
 from information_schema.job_history
 where status="FAILED" and {filter} order by start_time desc;
 '''
@@ -184,12 +184,12 @@ where status="FAILED" and {filter} order by start_time desc;
     if not df_failed.empty:
         st.subheader(f'Failed SQLs ({len(df_failed)})')
         AgGrid(df_failed,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, job_text, error_message
+select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text, error_message
 from information_schema.job_history
 where status="CANCELLED" and {filter} order by start_time desc;
 '''
@@ -197,12 +197,12 @@ where status="CANCELLED" and {filter} order by start_time desc;
     if not df_cancelled.empty:
         st.subheader(f'Cancelled SQLs ({len(df_cancelled)})')
         AgGrid(df_cancelled,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, input_bytes, cache_hit, virtual_cluster, job_creator, job_text
+select job_id, start_time, execution_time*1000 as duration, input_bytes, cache_hit, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
 where status="SUCCEED" and execution_time*1000>={slow_threshold} and {filter}
 order by start_time desc
@@ -211,7 +211,7 @@ order by start_time desc
     if not df_slow.empty:
         st.subheader(f'Slow Succeed SQLs ({len(df_slow)})')
         AgGrid(df_slow,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
+               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
