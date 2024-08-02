@@ -40,6 +40,7 @@ except:
 
 filter = 'true'
 filter_7days = 'true'
+filter_failed = "status='FAILED' and (error_message like '%CZLH-00000%' or (error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%'))"
 
 with st.form('filter'):
 
@@ -84,7 +85,7 @@ with t as (
 select count(1) as total,
   sum(if(status='SUCCEED',1,0)) as succeed,
   sum(if(status='RUNNING',1,0)) as running,
-  sum(if(status='FAILED',1,0)) as failed,
+  sum(if({filter_failed},1,0)) as failed,
   sum(if(status='CANCELLED',1,0)) as cancelled,
   sum(if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0)) as slow,
   min(start_time) as first_sql, max(start_time) as last_sql
@@ -176,20 +177,20 @@ group by time order by time asc;
     st.altair_chart(c, use_container_width=True)
 
     sql = f'''
-select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,job_text,error_message
+select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,error_message,job_text
 from information_schema.job_history
-where status="FAILED" and {filter} order by start_time desc;
+where {filter_failed} and {filter} order by start_time desc;
 '''
     df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
-        st.subheader(f'Failed SQLs ({len(df_failed)})')
+        st.subheader(f'Suspicious failed SQLs ({len(df_failed)})')
         AgGrid(df_failed,
                use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
                enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
 
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text, error_message
+select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
 where status="CANCELLED" and {filter} order by start_time desc;
 '''
@@ -220,7 +221,7 @@ order by start_time desc
 with t1 as (
   select date_format(start_time,'yyyy-MM-dd E') as ds,
     if(status='SUCCEED',1,0) as succeed,
-    if(status='FAILED',1,0) as failed,
+    if({filter_failed},1,0) as failed,
     if(status='CANCELLED',1,0) as cancelled,
     if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0) as slow,
     execution_time*1000 as duration
