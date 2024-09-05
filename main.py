@@ -1,10 +1,8 @@
 import datetime
-import pandas as pd
-import numpy as np
 import streamlit as st
-from st_aggrid import AgGrid, ColumnsAutoSizeMode, GridUpdateMode, GridOptionsBuilder, ExcelExportMode
 import altair as alt
 from PIL import Image
+import tzlocal
 
 icon = None
 try:
@@ -38,13 +36,12 @@ except:
     st.code('you can specify workspace in URL, eg. ?workspace=foo')
     st.stop()
 
-filter = 'true'
-filter_7days = 'true'
-filter_failed = "status='FAILED' and (error_message like '%CZLH-00000%' or (error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%'))"
+filter = "(error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%')"
+filter_7days = "(error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%')"
 
 with st.form('filter'):
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with col1:
         d = st.date_input('Date', datetime.date.today())
@@ -73,7 +70,13 @@ with st.form('filter'):
         days_of_stat = st.number_input('days of stats', value=7)
         date_far = (d + datetime.timedelta(days=-days_of_stat)).strftime('%Y-%m-%d 00:00:00')
 
+    with col6:
+        limit = st.number_input('table row limit', value=500)
+
     submitted = st.form_submit_button('Analyze')
+
+def gen_dt_col_conf_with_tz(title: str) -> st.column_config.DatetimeColumn:
+    return st.column_config.DatetimeColumn(title, timezone=tzlocal.get_localzone().key)
 
 if submitted:
     filter_7days = f"{filter} and start_time>='{date_far}'::timestamp and start_time<'{date_end}'::timestamp"
@@ -84,8 +87,7 @@ if submitted:
 with t as (
 select count(1) as total,
   sum(if(status='SUCCEED',1,0)) as succeed,
-  sum(if(status='RUNNING',1,0)) as running,
-  sum(if({filter_failed},1,0)) as failed,
+  sum(if(status='FAILED',1,0)) as failed,
   sum(if(status='CANCELLED',1,0)) as cancelled,
   sum(if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0)) as slow,
   min(start_time) as first_sql, max(start_time) as last_sql
@@ -95,30 +97,15 @@ select total, succeed, round(100*succeed/total,3) as `succeed rate`,
   failed, ceil(100*failed/total,3) as `failed rate`,
   cancelled, ceil(100*cancelled/total,3) as `cancelled rate`,
   slow, ceil(100*cancelled/total,3) as `slow rate`,
-  running, first_sql, last_sql
+  first_sql, last_sql
 from t
 '''
     # st.code(sql)
     df_stats = cz_conn.query(sql, ttl=TTL)
     # st.dataframe(df_stats, hide_index=True)
-    AgGrid(df_stats,
-           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-           excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-           enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
-
-    sql=f'''
-select job_id,start_time,job_creator,substring(md5(job_text),1,7) as job_md5,job_text,cru,input_bytes,output_bytes
-from information_schema.job_history
-where status="RUNNING" and {filter};
-'''
-    df_running = cz_conn.query(sql, ttl=TTL)
-    if not df_running.empty:
-        st.subheader('Running SQLs')
-        # st.dataframe(df_running)
-        AgGrid(df_running,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+    st.dataframe(df_stats, use_container_width=True, hide_index=True,
+                 column_config={'first_sql': gen_dt_col_conf_with_tz('first sql'),
+                                'last_sql': gen_dt_col_conf_with_tz('last sql')})
 
     st.subheader('Duration Distribution Chart')
     sql = f'''
@@ -146,7 +133,9 @@ ORDER BY percent asc;
     ).interactive()
     st.altair_chart(c, use_container_width=True)
 
-    st.subheader('QPS Distribution Chart')
+    col1, col2 = st.columns(2)
+    col1.subheader('Concurrency Distribution Chart')
+    max_header = col2.empty()
     # QPS
     sql = f'''
 WITH t1 as (select date_trunc('SECOND', start_time) as time_second
@@ -154,74 +143,74 @@ from information_schema.job_history
 where {filter} ),
 t2 as ( select time_second, count(1) as qps from t1
 group by time_second ),
-t3 as ( select to_timestamp(int(to_unix_timestamp(time_second) / 10) * 10) as time, qps
+t3 as ( select date_trunc('MINUTE', time_second) as time_minute, qps
 from t2 )
-select time, max(qps) as max_qps
+select time_minute, max(qps) as max_qps, sum(qps) as qpm, (sum(qps) - max(qps)) as delta
 from t3
-group by time order by time asc;
+group by time_minute order by time_minute asc;
 '''
-    # QPM
-#     sql = f'''
-# WITH t1 as (select date_trunc('MINUTE', start_time) as time_minute
-# from information_schema.job_history
-# where {filter} )
-# select time_minute, count(1) as qpm from t1
-# group by time_minute order by time_minute asc;
-# '''
     df_qps = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
-        alt.Chart(df_qps).mark_bar(size=1).encode(
-            x=alt.X('time', title='time(minute)', axis=alt.Axis(format='%X')),
-            y=alt.Y('max_qps', title='qps(max)'))
+        # stack bar
+        alt.Chart(df_qps).transform_fold(
+            ['max_qps', 'delta'],
+            as_=['query', 'value'],
+        ).mark_bar(size=1).encode(
+            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='time in minute'),
+            y=alt.Y('value', type='quantitative', title=None),
+            color=alt.Color('query:N').legend(None),
+            order=alt.Order('query:N', sort='descending'),
+            tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
+                     alt.Tooltip('qpm', title='QPM'),
+                     alt.Tooltip('max_qps', title='Max QPS in minute')]
+        )
     ).interactive()
     st.altair_chart(c, use_container_width=True)
+    max_header.code(f'Max QPS: {df_qps["max_qps"].max()}, Max QPM: {df_qps["qpm"].max()}')
 
     sql = f'''
 select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,error_message,job_text
 from information_schema.job_history
-where {filter_failed} and {filter} order by start_time desc;
+where status='FAILED' and {filter} order by start_time desc
+limit {limit}
 '''
     df_failed = cz_conn.query(sql, ttl=TTL)
     if not df_failed.empty:
-        st.subheader(f'Suspicious failed SQLs ({len(df_failed)})')
-        AgGrid(df_failed,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+        st.subheader(f'Suspicious failed SQLs ({len(df_failed)})', help='do no include "Syntax error", "table or view not found", "can not resolve column"')
+        st.dataframe(df_failed, use_container_width=True, hide_index=True,
+                     column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
     sql = f'''
 select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
-where status="CANCELLED" and {filter} order by start_time desc;
+where status="CANCELLED" and {filter} order by start_time desc
+limit {limit}
 '''
     df_cancelled = cz_conn.query(sql, ttl=TTL)
     if not df_cancelled.empty:
         st.subheader(f'Cancelled SQLs ({len(df_cancelled)})')
-        AgGrid(df_cancelled,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+        st.dataframe(df_cancelled, use_container_width=True, hide_index=True,
+                     column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
     sql = f'''
 select job_id, start_time, execution_time*1000 as duration, input_bytes, cache_hit, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
 where status="SUCCEED" and execution_time*1000>={slow_threshold} and {filter}
 order by start_time desc
+limit {limit}
 '''
     df_slow = cz_conn.query(sql, ttl=TTL)
     if not df_slow.empty:
         st.subheader(f'Slow Succeed SQLs ({len(df_slow)})')
-        AgGrid(df_slow,
-               use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-               excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-               enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+        st.dataframe(df_slow, use_container_width=True, hide_index=True,
+                     column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
     st.header(f'{days_of_stat} Days Stats [{date_far}, {date_end})')
     sql = f'''
 with t1 as (
   select date_format(start_time,'yyyy-MM-dd E') as ds,
     if(status='SUCCEED',1,0) as succeed,
-    if({filter_failed},1,0) as failed,
+    if(status='FAILED',1,0) as failed,
     if(status='CANCELLED',1,0) as cancelled,
     if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0) as slow,
     execution_time*1000 as duration
@@ -245,7 +234,7 @@ with t1 as (
   )
 select ds as date,total,
   succeed,
-  round(100*succeed/total,3) as `succeed rate`,
+  floor(100*succeed/total,3) as `succeed rate`,
   failed,
   ceil(100*failed/total,3) as `failed rate`,
   cancelled,
@@ -264,7 +253,4 @@ order by ds desc
 '''
     # st.code(sql)
     df_7days = cz_conn.query(sql, ttl=TTL)
-    AgGrid(df_7days,
-           use_container_width=True, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
-           excel_export_mode=ExcelExportMode.TRIGGER_DOWNLOAD,
-           enable_enterprise_modules=True, update_mode=GridUpdateMode.SELECTION_CHANGED, reload_data=True)
+    st.dataframe(df_7days, use_container_width=True, hide_index=True)
