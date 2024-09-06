@@ -164,7 +164,7 @@ group by time_minute order by time_minute asc;
                      alt.Tooltip('qpm', title='QPM'),
                      alt.Tooltip('max_qps', title='Max QPS in minute')]
         )
-    ).interactive()
+    ).interactive(bind_y=False)
     st.altair_chart(c, use_container_width=True)
     max_header.code(f'Max QPS: {df_qps["max_qps"].max()}, Max QPM: {df_qps["qpm"].max()}')
 
