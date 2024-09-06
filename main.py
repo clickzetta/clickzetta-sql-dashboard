@@ -93,10 +93,10 @@ select count(1) as total,
   min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, round(100*succeed/total,3) as `succeed rate`,
+select total, succeed, floor(100*succeed/total,3) as `succeed rate`,
   failed, ceil(100*failed/total,3) as `failed rate`,
   cancelled, ceil(100*cancelled/total,3) as `cancelled rate`,
-  slow, ceil(100*cancelled/total,3) as `slow rate`,
+  slow, ceil(100*slow/total,3) as `slow rate`,
   first_sql, last_sql
 from t
 '''
@@ -134,8 +134,8 @@ ORDER BY percent asc;
     st.altair_chart(c, use_container_width=True)
 
     col1, col2 = st.columns(2)
-    col1.subheader('Concurrency Distribution Chart')
-    max_header = col2.empty()
+    col1.subheader('QPM Distribution Chart')
+    qpm_header = col2.empty()
     # QPS
     sql = f'''
 WITH t1 as (select date_trunc('SECOND', start_time) as time_second
@@ -150,6 +150,8 @@ from t3
 group by time_minute order by time_minute asc;
 '''
     df_qps = cz_conn.query(sql, ttl=TTL)
+
+    # qps & qpm
     c = alt.layer(
         # stack bar
         alt.Chart(df_qps).transform_fold(
@@ -161,12 +163,27 @@ group by time_minute order by time_minute asc;
             color=alt.Color('query:N').legend(None),
             order=alt.Order('query:N', sort='descending'),
             tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
-                     alt.Tooltip('qpm', title='QPM'),
-                     alt.Tooltip('max_qps', title='Max QPS in minute')]
+                        alt.Tooltip('qpm', title='QPM'),
+                        alt.Tooltip('max_qps', title='Max QPS in minute')]
         )
     ).interactive(bind_y=False)
     st.altair_chart(c, use_container_width=True)
-    max_header.code(f'Max QPS: {df_qps["max_qps"].max()}, Max QPM: {df_qps["qpm"].max()}')
+    qpm_header.code(f'Max QPM: {df_qps["qpm"].max()}')
+
+    col1, col2 = st.columns(2)
+    col1.subheader('QPS Distribution Chart (Max QPS in minute)')
+    qps_header = col2.empty()
+    # qps
+    c = alt.layer(
+        alt.Chart(df_qps).mark_bar(size=1).encode(
+            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='time in minute'),
+            y=alt.Y('max_qps:Q', title=None),
+            tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
+                        alt.Tooltip('max_qps', title='Max QPS in minute')]
+        )
+    ).interactive(bind_y=False)
+    st.altair_chart(c, use_container_width=True)
+    qps_header.code(f'Max QPS: {df_qps["max_qps"].max()}')
 
     sql = f'''
 select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,error_message,job_text
