@@ -20,6 +20,20 @@ st.set_page_config(
     }
 )
 
+# Reducing whitespace on the top of the page
+st.markdown("""
+<style>
+
+.block-container
+{
+    padding-top: 0.5rem;
+    padding-bottom: 0rem;
+    margin-top: 0.5rem;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
 st.title('ClickZetta Lakehouse SQL Dashboard')
 
 TTL = 60
