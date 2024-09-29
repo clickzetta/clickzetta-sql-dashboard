@@ -51,11 +51,9 @@ except:
     st.stop()
 
 filter = "(error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%')"
-filter_7days = "(error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%')"
 
 with st.form('filter'):
-
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns([1,3,3,1,1,1,3])
 
     with col1:
         d = st.date_input('Date', datetime.date.today())
@@ -86,6 +84,14 @@ with st.form('filter'):
 
     with col6:
         limit = st.number_input('table row limit', value=500)
+
+    with col7:
+        ignore_sqls = st.text_input('ignore SQLs', '', help='use ; to separate multiple SQLs')
+        if ignore_sqls:
+            ignore_sql_filter = ' and '.join(
+                f"regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{x.lower()}'"
+                for x in ignore_sqls.split(';'))
+            filter = f'{filter} and ({ignore_sql_filter})'
 
     submitted = st.form_submit_button('Analyze')
 
@@ -121,32 +127,62 @@ from t
                  column_config={'first_sql': gen_dt_col_conf_with_tz('first sql'),
                                 'last_sql': gen_dt_col_conf_with_tz('last sql')})
 
-    st.subheader('Duration Distribution Chart')
+    st.subheader('Execution Time Distribution Chart')
     sql = f'''
 WITH t1 AS (
-select cast(execution_time * 1000 as bigint) as duration
+select cast(execution_time * 1000 as bigint) as execution_time
 from information_schema.job_history
 where status='SUCCEED' and {filter}
 ), t2 AS (
-select if(duration<1,1,duration) as duration, NTILE(100) OVER (ORDER BY duration asc) AS percent
+select if(execution_time<1,1,execution_time) as execution_time, NTILE(1000) OVER (ORDER BY execution_time asc) AS ntile
 from t1
 )
 SELECT
-percent,
-AVG(duration) as avg_duration,
-MAX(duration) AS max_duration
+ntile/10 as percent,
+AVG(execution_time) as avg_exec_time,
+MAX(execution_time) AS max_exec_time
 FROM t2
 GROUP BY percent
 ORDER BY percent asc;
 '''
     df_oneday = cz_conn.query(sql, ttl=TTL)
     c = alt.layer(
-        alt.Chart(df_oneday).mark_line(point=True).encode(
+        alt.Chart(df_oneday).mark_line().encode(
             x=alt.X('percent', title='percent(%)'),
-            y=alt.Y('max_duration', title='duration(ms)').scale(type='log'))
+            y=alt.Y('max_exec_time', title='execution time(ms)').scale(type='log'))
     ).interactive()
     st.altair_chart(c, use_container_width=True)
 
+    # execution time chart
+    sql = f'''
+with t1 as (
+select date_trunc('MINUTE',start_time) as time_minute, execution_time*1000 as execution_time
+from information_schema.job_history
+where {filter} )
+select time_minute,
+  min(execution_time) as min,
+  avg(execution_time) as avg,
+  percentile(execution_time, 0.50) as medium,
+  percentile(execution_time, 0.75) as p75,
+  percentile(execution_time, 0.90) as p90,
+  percentile(execution_time, 0.95) as p95,
+  percentile(execution_time, 0.99) as p99,
+  max(execution_time) as max
+from t1 group by time_minute order by time_minute asc;
+'''
+    df_exec_dist = cz_conn.query(sql, ttl=TTL)
+    if not df_exec_dist.empty:
+        hint = ['min', 'avg', 'medium', 'p75', 'p90', 'p95', 'p99', 'max']
+        c = alt.layer(
+            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(y=alt.Y('p95'), detail=hint),
+            alt.Chart(df_exec_dist).mark_errorbar().encode(
+                y=alt.Y('p90', title='execution time(ms)'), y2='p99', detail=hint, color=alt.value('#e0e0e0'))
+        ).encode(
+            x=alt.X('time_minute', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute')
+        ).interactive(bind_y=False)
+        st.altair_chart(c, use_container_width=True)
+
+    # qps & qpm chart
     col1, col2 = st.columns(2)
     col1.subheader('QPM Distribution Chart')
     qpm_header = col2.empty()
@@ -172,7 +208,7 @@ group by time_minute order by time_minute asc;
             ['max_qps', 'delta'],
             as_=['query', 'value'],
         ).mark_bar(size=1).encode(
-            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='time in minute'),
+            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute'),
             y=alt.Y('value', type='quantitative', title=None),
             color=alt.Color('query:N').legend(None),
             order=alt.Order('query:N', sort='descending'),
@@ -190,7 +226,7 @@ group by time_minute order by time_minute asc;
     # qps
     c = alt.layer(
         alt.Chart(df_qps).mark_bar(size=1).encode(
-            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='time in minute'),
+            x=alt.X('time_minute:T', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute'),
             y=alt.Y('max_qps:Q', title=None),
             tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
                         alt.Tooltip('max_qps', title='Max QPS in minute')]
@@ -199,8 +235,9 @@ group by time_minute order by time_minute asc;
     st.altair_chart(c, use_container_width=True)
     qps_header.code(f'Max QPS: {df_qps["max_qps"].max()}')
 
+    # failed sql table
     sql = f'''
-select job_id,start_time,execution_time*1000 as duration,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,error_message,job_text
+select job_id,start_time,execution_time*1000 as execution_time,status,virtual_cluster,job_creator,substring(md5(job_text),1,7) as job_md5,error_message,job_text
 from information_schema.job_history
 where status='FAILED' and {filter} order by start_time desc
 limit {limit}
@@ -211,8 +248,9 @@ limit {limit}
         st.dataframe(df_failed, use_container_width=True, hide_index=True,
                      column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
+    # cancelled sql table
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
+select job_id, start_time, execution_time*1000 as execution_time, status, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
 where status="CANCELLED" and {filter} order by start_time desc
 limit {limit}
@@ -223,8 +261,9 @@ limit {limit}
         st.dataframe(df_cancelled, use_container_width=True, hide_index=True,
                      column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
+    # slow sql table
     sql = f'''
-select job_id, start_time, execution_time*1000 as duration, input_bytes, cache_hit, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
+select job_id, start_time, execution_time*1000 as execution_time, input_bytes, cache_hit, virtual_cluster, job_creator, substring(md5(job_text),1,7) as job_md5,job_text
 from information_schema.job_history
 where status="SUCCEED" and execution_time*1000>={slow_threshold} and {filter}
 order by start_time desc
@@ -236,6 +275,7 @@ limit {limit}
         st.dataframe(df_slow, use_container_width=True, hide_index=True,
                      column_config={'start_time': gen_dt_col_conf_with_tz('start time')})
 
+    # multiple days stats
     st.header(f'{days_of_stat} Days Stats [{date_far}, {date_end})')
     sql = f'''
 with t1 as (
@@ -244,7 +284,7 @@ with t1 as (
     if(status='FAILED',1,0) as failed,
     if(status='CANCELLED',1,0) as cancelled,
     if(status='SUCCEED' and execution_time*1000>={slow_threshold},1,0) as slow,
-    execution_time*1000 as duration
+    execution_time*1000 as execution_time
   from information_schema.job_history
   where {filter_7days} ),
   t2 as (
@@ -253,13 +293,13 @@ with t1 as (
       sum(failed) as failed,
       sum(cancelled) as cancelled,
       sum(slow) as slow,
-      avg(duration) as avg,
-      percentile(duration, 0.50) as p50,
-      percentile(duration, 0.75) as p75,
-      percentile(duration, 0.90) as p90,
-      percentile(duration, 0.95) as p95,
-      percentile(duration, 0.99) as p99,
-      max(duration) as max,
+      avg(execution_time) as avg,
+      percentile(execution_time, 0.50) as p50,
+      percentile(execution_time, 0.75) as p75,
+      percentile(execution_time, 0.90) as p90,
+      percentile(execution_time, 0.95) as p95,
+      percentile(execution_time, 0.99) as p99,
+      max(execution_time) as max,
     from t1
     group by ds
   )
