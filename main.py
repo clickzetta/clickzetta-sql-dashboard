@@ -89,7 +89,7 @@ with st.form('filter'):
         ignore_sqls = st.text_input('ignore SQLs', '', help='use ; to separate multiple SQLs')
         if ignore_sqls:
             ignore_sql_filter = ' and '.join(
-                f"regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{x.lower()}'"
+                f"regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{x.strip().lower()}'"
                 for x in ignore_sqls.split(';'))
             filter = f'{filter} and ({ignore_sql_filter})'
 
@@ -158,7 +158,7 @@ ORDER BY percent asc;
 with t1 as (
 select date_trunc('MINUTE',start_time) as time_minute, execution_time*1000 as execution_time
 from information_schema.job_history
-where {filter} )
+where status='SUCCEED' and {filter} )
 select time_minute,
   min(execution_time) as min,
   avg(execution_time) as avg,
