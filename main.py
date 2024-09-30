@@ -38,8 +38,28 @@ st.title('ClickZetta Lakehouse SQL Dashboard')
 
 TTL = 60
 
-workspace = st.text_input('workspace', st.query_params.get('workspace', None))
+try:
+    workspaces = st.secrets.connections.keys()
+except:
+    workspaces = []
+if not workspaces:
+    st.warning('No connections found in secrets, please deploy a secrets.toml. Here is an example:')
+    st.code('''[connections.WORKSPACE]
+url = "clickzetta://USER:PASSWORD@INSTANCE.REGION.api.clickzetta.com/WORKSPACE?virtualcluster=VCLUSTER"
+''')
+    st.stop()
+with st.sidebar:
+    w = st.query_params.get('workspace', None)
+    idx = None
+    if w:
+        try:
+            idx = workspaces.index(w)
+        except:
+            st.warning(f'Workspace {w} specified in url not found in secrets.')
+    workspace = st.selectbox('Workspace', workspaces, index=idx)
+
 if not workspace:
+    st.write(':point_left: Fill necessary information in side bar and click analyze button')
     st.stop()
 
 try:
@@ -52,15 +72,12 @@ except:
 
 filter = "(error_message not like '%Syntax error%' and error_message not like '%table or view not found%' and error_message not like '%cannot resolve column%')"
 
-with st.form('filter'):
-    col1, col2, col3, col4, col5, col6, col7 = st.columns([1,3,3,1,1,1,3])
-
-    with col1:
+with st.sidebar:
+    with st.form('filter'):
         d = st.date_input('Date', datetime.date.today())
         date_start = d.strftime('%Y-%m-%d 00:00:00')
         date_end = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d 00:00:00')
 
-    with col2:
         df_vclusters = cz_conn.query('show vclusters;')
         vclusters = df_vclusters['name'].to_list()
         vcluster_selected = st.multiselect('VCluster', vclusters)
@@ -68,32 +85,32 @@ with st.form('filter'):
             tmp = ",".join([f'"{v}"' for v in vcluster_selected])
             filter = f'{filter} and virtual_cluster in ({tmp})'
 
-    with col3:
         df_users = cz_conn.query('show users;')
         users = df_users['name'].to_list()
         user_selected = st.multiselect('User', users)
         if user_selected:
             tmp = ",".join([f'"{v}"' for v in user_selected])
             filter = f'{filter} and job_creator in ({tmp})'
-    with col4:
-        slow_threshold = st.number_input('slow query(ms)', value=10000)
 
-    with col5:
-        days_of_stat = st.number_input('days of stats', value=7)
+        slow_threshold = st.number_input('Slow SQL Threshold(ms)', value=10000)
+
+        days_of_stat = st.number_input('Days of Stats', value=7)
         date_far = (d + datetime.timedelta(days=-days_of_stat)).strftime('%Y-%m-%d 00:00:00')
 
-    with col6:
-        limit = st.number_input('table row limit', value=500)
+        limit = st.number_input('Table Row Limit', value=500)
 
-    with col7:
-        ignore_sqls = st.text_input('ignore SQLs', '', help='use ; to separate multiple SQLs')
+        ignore_sqls = st.text_input('Ignore SQLs', '', help='use ; to separate multiple SQLs, eg "select 1;show tables"')
         if ignore_sqls:
             ignore_sql_filter = ' and '.join(
-                f"regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{x.strip().lower()}'"
-                for x in ignore_sqls.split(';'))
+                "regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{}'".
+                format(x.strip().lower().replace("'", "\\'")) for x in ignore_sqls.split(';'))
             filter = f'{filter} and ({ignore_sql_filter})'
 
-    submitted = st.form_submit_button('Analyze')
+        errbar = st.selectbox("Execution Time Chart Errbar Series",
+                              ["medium, p75, p90", "p90, p95, p99", "min, medium, max", "min, avg, max"])
+        errbar_y, errbar_p, errbar_y2 = errbar.split(', ')
+
+        submitted = st.form_submit_button('Analyze')
 
 def gen_dt_col_conf_with_tz(title: str) -> st.column_config.DatetimeColumn:
     return st.column_config.DatetimeColumn(title, timezone=tzlocal.get_localzone().key)
@@ -174,9 +191,10 @@ from t1 group by time_minute order by time_minute asc;
     if not df_exec_dist.empty:
         hint = ['min', 'avg', 'medium', 'p75', 'p90', 'p95', 'p99', 'max']
         c = alt.layer(
-            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(y=alt.Y('p95'), detail=hint),
+            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(y=alt.Y(errbar_p), detail=hint),
             alt.Chart(df_exec_dist).mark_errorbar().encode(
-                y=alt.Y('p90', title='execution time(ms)'), y2='p99', detail=hint, color=alt.value('#e0e0e0'))
+                y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
+                y2=errbar_y2, detail=hint, color=alt.value('#e0e0e0'))
         ).encode(
             x=alt.X('time_minute', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute')
         ).interactive(bind_y=False)
