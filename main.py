@@ -43,7 +43,7 @@ try:
 except:
     workspaces = []
 if not workspaces:
-    st.warning('No connections found in secrets, please deploy a secrets.toml. Here is an example:')
+    st.warning('No connections found in secrets, please deploy secrets.toml. Example:')
     st.code('''[connections.WORKSPACE]
 url = "clickzetta://USER:PASSWORD@INSTANCE.REGION.api.clickzetta.com/WORKSPACE?virtualcluster=VCLUSTER"
 ''')
@@ -189,12 +189,16 @@ from t1 group by time_minute order by time_minute asc;
 '''
     df_exec_dist = cz_conn.query(sql, ttl=TTL)
     if not df_exec_dist.empty:
-        hint = ['min', 'avg', 'medium', 'p75', 'p90', 'p95', 'p99', 'max']
+        tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
+                 alt.Tooltip(errbar_y2, title=errbar_y2),
+                 alt.Tooltip(errbar_p, title=errbar_p),
+                 alt.Tooltip(errbar_y, title=errbar_y)]
         c = alt.layer(
-            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(y=alt.Y(errbar_p), detail=hint),
+            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(
+                y=alt.Y(errbar_p), tooltip=tooltip),
             alt.Chart(df_exec_dist).mark_errorbar().encode(
                 y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
-                y2=errbar_y2, detail=hint, color=alt.value('#e0e0e0'))
+                y2=errbar_y2, tooltip=tooltip, color=alt.value('#e0e0e0'))
         ).encode(
             x=alt.X('time_minute', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute')
         ).interactive(bind_y=False)
