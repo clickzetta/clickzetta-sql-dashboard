@@ -39,7 +39,7 @@ st.title('ClickZetta Lakehouse SQL Dashboard')
 TTL = 60
 
 try:
-    workspaces = st.secrets.connections.keys()
+    workspaces = list(st.secrets.connections.keys())
 except:
     workspaces = []
 if not workspaces:
