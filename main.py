@@ -94,20 +94,20 @@ with st.sidebar:
 
         slow_threshold = st.number_input('Slow SQL Threshold(ms)', value=10000)
 
-        days_of_stat = st.number_input('Days of Stats', value=7)
+        days_of_stat = st.number_input('Days of Stats', value=30)
         date_far = (d + datetime.timedelta(days=-days_of_stat)).strftime('%Y-%m-%d 00:00:00')
 
         limit = st.number_input('Table Row Limit', value=500)
 
-        ignore_sqls = st.text_input('Ignore SQLs', '', help='use ; to separate multiple SQLs, eg "select 1;show tables"')
-        if ignore_sqls:
-            ignore_sql_filter = ' and '.join(
-                "regexp_replace(regexp_replace(lower(job_text),'^\\\\s*',''),'\\\\s*;\\\\s*$','')!='{}'".
-                format(x.strip().lower().replace("'", "\\'")) for x in ignore_sqls.split(';'))
-            filter = f'{filter} and ({ignore_sql_filter})'
+        custom_filter = st.text_input('Custom filter', '', help=r"eg. job_text like '%id=1%'")
+        if custom_filter:
+            filter = f'{filter} and ({custom_filter})'
+        ignore_select1 = st.checkbox('Ignore select 1', True)
+        if ignore_select1:
+            filter = f"{filter} and (not rlike(lower(job_text),'^\\\\s*select\\\\s+1\\\\s*;?\\\\s*$'))"
 
         errbar = st.selectbox("Execution Time Chart Errbar Series",
-                              ["medium, p75, p90", "p90, p95, p99", "min, medium, max", "min, avg, max"])
+                              ["p50, p75, p90", "p90, p95, p99", "min, p50, max", "min, avg, max"])
         errbar_y, errbar_p, errbar_y2 = errbar.split(', ')
 
         submitted = st.form_submit_button('Analyze')
@@ -179,7 +179,7 @@ where status='SUCCEED' and {filter} )
 select time_minute,
   min(execution_time) as min,
   avg(execution_time) as avg,
-  percentile(execution_time, 0.50) as medium,
+  percentile(execution_time, 0.50) as p50,
   percentile(execution_time, 0.75) as p75,
   percentile(execution_time, 0.90) as p90,
   percentile(execution_time, 0.95) as p95,
@@ -315,6 +315,7 @@ with t1 as (
       sum(failed) as failed,
       sum(cancelled) as cancelled,
       sum(slow) as slow,
+      min(execution_time) as min,
       avg(execution_time) as avg,
       percentile(execution_time, 0.50) as p50,
       percentile(execution_time, 0.75) as p75,
@@ -334,6 +335,7 @@ select ds as date,total,
   ceil(100*cancelled/total,3) as `cancelled rate`,
   slow,
   ceil(100*slow/total,3) as `slow rate`,
+  min::bigint as min,
   avg::bigint as avg,
   p50::bigint as p50,
   p75::bigint as p75,
@@ -346,4 +348,21 @@ order by ds desc
 '''
     # st.code(sql)
     df_7days = cz_conn.query(sql, ttl=TTL)
+
+    if not df_7days.empty:
+        tooltip=[alt.Tooltip('date', title='Date'),
+                 alt.Tooltip(errbar_y2, title=errbar_y2),
+                 alt.Tooltip(errbar_p, title=errbar_p),
+                 alt.Tooltip(errbar_y, title=errbar_y)]
+        c = alt.layer(
+            alt.Chart(df_7days).mark_point(filled=True, size=10).encode(
+                y=alt.Y(errbar_p), tooltip=tooltip),
+            alt.Chart(df_7days).mark_errorbar().encode(
+                y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
+                y2=errbar_y2, tooltip=tooltip, color=alt.value('#e0e0e0'))
+        ).encode(
+            x=alt.X('date')
+        ).interactive()
+        st.altair_chart(c, use_container_width=True)
+
     st.dataframe(df_7days, use_container_width=True, hide_index=True)
