@@ -351,15 +351,16 @@ order by ds desc
 
     if not df_7days.empty:
         tooltip=[alt.Tooltip('date', title='Date'),
+                 alt.Tooltip('total', title='total'),
                  alt.Tooltip(errbar_y2, title=errbar_y2),
                  alt.Tooltip(errbar_p, title=errbar_p),
                  alt.Tooltip(errbar_y, title=errbar_y)]
         c = alt.layer(
-            alt.Chart(df_7days).mark_point(filled=True, size=10).encode(
-                y=alt.Y(errbar_p), tooltip=tooltip),
-            alt.Chart(df_7days).mark_errorbar().encode(
+            alt.Chart(df_7days).mark_point(filled=True).encode(
+                y=alt.Y(errbar_p), color='total:Q', tooltip=tooltip),
+            alt.Chart(df_7days).mark_errorbar(ticks=True).encode(
                 y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
-                y2=errbar_y2, tooltip=tooltip, color=alt.value('#e0e0e0'))
+                y2=errbar_y2, tooltip=tooltip)
         ).encode(
             x=alt.X('date')
         ).interactive()
