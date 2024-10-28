@@ -176,7 +176,7 @@ with t1 as (
 select date_trunc('MINUTE',start_time) as time_minute, execution_time*1000 as execution_time
 from information_schema.job_history
 where status='SUCCEED' and {filter} )
-select time_minute,
+select time_minute, count(1) as total,
   min(execution_time) as min,
   avg(execution_time) as avg,
   percentile(execution_time, 0.50) as p50,
@@ -190,15 +190,16 @@ from t1 group by time_minute order by time_minute asc;
     df_exec_dist = cz_conn.query(sql, ttl=TTL)
     if not df_exec_dist.empty:
         tooltip=[alt.Tooltip('time_minute', title='Time', format='%Y-%m-%d %H:%M'),
+                 alt.Tooltip('total', title='QPM'),
                  alt.Tooltip(errbar_y2, title=errbar_y2),
                  alt.Tooltip(errbar_p, title=errbar_p),
                  alt.Tooltip(errbar_y, title=errbar_y)]
         c = alt.layer(
-            alt.Chart(df_exec_dist).mark_point(filled=True, size=10).encode(
-                y=alt.Y(errbar_p), tooltip=tooltip),
             alt.Chart(df_exec_dist).mark_errorbar().encode(
                 y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
-                y2=errbar_y2, tooltip=tooltip, color=alt.value('#e0e0e0'))
+                y2=errbar_y2, tooltip=tooltip, color=alt.Color('total:Q').scale(scheme='oranges')),
+            alt.Chart(df_exec_dist).mark_point(shape='stroke', angle=0, size=10, strokeWidth=2).encode(
+                y=alt.Y(errbar_p), tooltip=tooltip)
         ).encode(
             x=alt.X('time_minute', axis=alt.Axis(format='%Y-%m-%d %H:%M'), title='start time in minute')
         ).interactive(bind_y=False)
@@ -356,8 +357,8 @@ order by ds desc
                  alt.Tooltip(errbar_p, title=errbar_p),
                  alt.Tooltip(errbar_y, title=errbar_y)]
         c = alt.layer(
-            alt.Chart(df_7days).mark_point(filled=True).encode(
-                y=alt.Y(errbar_p), color='total:Q', tooltip=tooltip),
+            alt.Chart(df_7days).mark_point(shape='stroke', angle=0, strokeWidth=4).encode(
+                y=alt.Y(errbar_p), size='total:Q', color='total:Q', tooltip=tooltip),
             alt.Chart(df_7days).mark_errorbar(ticks=True).encode(
                 y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
                 y2=errbar_y2, tooltip=tooltip)
