@@ -92,7 +92,7 @@ with st.sidebar:
             tmp = ",".join([f'"{v}"' for v in user_selected])
             filter = f'{filter} and job_creator in ({tmp})'
 
-        slow_threshold = st.number_input('Slow SQL Threshold(ms)', value=10000)
+        slow_threshold = st.number_input('Slow SQL Threshold(ms)', value=10000, step=1000)
 
         days_of_stat = st.number_input('Days of Stats', value=30)
         date_far = (d + datetime.timedelta(days=-days_of_stat)).strftime('%Y-%m-%d 00:00:00')
@@ -107,7 +107,7 @@ with st.sidebar:
             filter = f"{filter} and (not rlike(lower(job_text),'^\\\\s*select\\\\s+1\\\\s*;?\\\\s*$'))"
 
         errbar = st.selectbox("Execution Time Chart Errbar Series",
-                              ["p50, p75, p90", "p90, p95, p99", "min, p50, max", "min, avg, max"])
+                              ["p90, p95, p99", "p50, p75, p90", "min, p50, max", "min, avg, max"])
         errbar_y, errbar_p, errbar_y2 = errbar.split(', ')
 
         submitted = st.form_submit_button('Analyze')
@@ -130,10 +130,10 @@ select count(1) as total,
   min(start_time) as first_sql, max(start_time) as last_sql
 from information_schema.job_history
 where {filter} )
-select total, succeed, floor(100*succeed/total,3) as `succeed rate`,
-  failed, ceil(100*failed/total,3) as `failed rate`,
-  cancelled, ceil(100*cancelled/total,3) as `cancelled rate`,
-  slow, ceil(100*slow/total,3) as `slow rate`,
+select total, succeed, floor(100*succeed/total,3) as `succeed%`,
+  failed, ceil(100*failed/total,3) as `failed%`,
+  cancelled, ceil(100*cancelled/total,3) as `cancelled%`,
+  slow, ceil(100*slow/total,3) as `slow%`,
   first_sql, last_sql
 from t
 '''
@@ -329,13 +329,13 @@ with t1 as (
   )
 select ds as date,total,
   succeed,
-  floor(100*succeed/total,3) as `succeed rate`,
+  floor(100*succeed/total,3) as `succeed%`,
   failed,
-  ceil(100*failed/total,3) as `failed rate`,
+  ceil(100*failed/total,3) as `failed%`,
   cancelled,
-  ceil(100*cancelled/total,3) as `cancelled rate`,
+  ceil(100*cancelled/total,3) as `cancelled%`,
   slow,
-  ceil(100*slow/total,3) as `slow rate`,
+  ceil(100*slow/total,3) as `slow%`,
   min::bigint as min,
   avg::bigint as avg,
   p50::bigint as p50,
@@ -357,7 +357,7 @@ order by ds desc
                  alt.Tooltip(errbar_p, title=errbar_p),
                  alt.Tooltip(errbar_y, title=errbar_y)]
         c = alt.layer(
-            alt.Chart(df_7days).mark_point(shape='stroke', angle=0, strokeWidth=4).encode(
+            alt.Chart(df_7days).mark_point(shape='stroke', angle=0, strokeWidth=2).encode(
                 y=alt.Y(errbar_p), size='total:Q', color='total:Q', tooltip=tooltip),
             alt.Chart(df_7days).mark_errorbar(ticks=True).encode(
                 y=alt.Y(errbar_y, title=f'execution time(ms): {errbar_y}, {errbar_p}, {errbar_y2}'),
