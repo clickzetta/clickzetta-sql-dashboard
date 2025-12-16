@@ -3,7 +3,7 @@
 # Getting Started
 
 ```
-# setup python env, 3.9 tested
+# setup python env, 3.11 tested
 pip install -r requirements.txt
 
 # prepare clickzetta lakehouse connection
