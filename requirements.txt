@@ -1,6 +1,5 @@
-streamlit
+streamlit~=1.50
 altair
-clickzetta_connector_python~=0.8.79
-SQLAlchemy~=2.0.27
+clickzetta-connector~=1.0
 pillow
-tzlocal~=5.2
+tzlocal
